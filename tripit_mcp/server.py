@@ -409,7 +409,7 @@ async def tripit_delete_trip(trip_id: str) -> Dict[str, Any]:
 def _build_segment_data(segment) -> Dict[str, Any]:
     """Build a TripIt Segment dict from a segment input model."""
     seg: Dict[str, Any] = {}
-    for field_name in segment.model_fields:
+    for field_name in type(segment).model_fields:
         value = getattr(segment, field_name)
         if value is not None:
             # Map field names to TripIt API keys
@@ -934,7 +934,7 @@ async def tripit_create_transport(
 def _build_rail_segment_data(segment) -> Dict[str, Any]:
     """Build a TripIt rail Segment dict from a RailSegmentInput."""
     seg: Dict[str, Any] = {}
-    for field_name in segment.model_fields:
+    for field_name in type(segment).model_fields:
         value = getattr(segment, field_name)
         if value is not None:
             if field_name == "start_date":
