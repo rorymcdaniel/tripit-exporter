@@ -1,19 +1,24 @@
 # TripIt MCP Server
 
-A Model Context Protocol (MCP) server that provides access to your TripIt trip data through a standardized interface. This server allows AI assistants and other MCP clients to fetch your past and upcoming trips from your TripIt account.
+A Model Context Protocol (MCP) server that provides full CRUD access to your TripIt trip data through a standardized interface. This server allows AI assistants and other MCP clients to manage your trips, flights, hotels, car rentals, activities, restaurants, ground transport, trains, and notes on TripIt.
 
 ## Features
 
-- Access your TripIt trips through MCP protocol
-- List all trips with optional date range filtering
-- Get detailed information about specific trips
-- OAuth authenticated access to the TripIt API
+- **Full CRUD access** to TripIt trips and travel objects
+- **16 MCP tools** covering trips, flights, hotels, car rentals, activities, restaurants, ground transport, rail, notes, and user profile
+- List trips with filters (past/future, traveler, pagination)
+- Create, update, and delete trips
+- Create and delete travel objects (flights, hotels, car rentals, etc.)
+- Get detailed information about any travel object
+- OAuth 1.0a authenticated access to the TripIt API
+- Pydantic input validation on all tools
+- MCP tool annotations (readOnlyHint, destructiveHint, idempotentHint)
 - Built using FastMCP for MCP protocol implementation
 - Docker and Docker Compose support for easy deployment
 
 ## Prerequisites
 
-- Python 3.8+ (for local installation)
+- Python 3.10+ (for local installation)
 - [uv](https://github.com/astral-sh/uv) - Python package manager (for local installation)
 - Docker and Docker Compose (for containerized deployment)
 - TripIt account with API access (Consumer Key and Secret)
@@ -168,28 +173,54 @@ docker-compose logs -f
 docker-compose down
 ```
 
-### MCP Functions
+### MCP Tools
 
-The server provides the following MCP functions:
+The server provides 16 MCP tools organized into read and write operations. All tool names use the `tripit_` prefix.
 
-#### `list_trips`
+#### Read Tools
 
-Lists all trips, optionally filtered by date range.
+| Tool | Description |
+|------|-------------|
+| `tripit_list_trips` | List trips with filters for past/future, traveler, pagination |
+| `tripit_get_trip` | Get full details for a specific trip by ID |
+| `tripit_list_objects` | List travel objects within a trip, optionally filtered by type |
+| `tripit_get_object` | Get a specific travel object by type and ID |
+| `tripit_get_profile` | Get the authenticated user's profile |
+
+#### Write Tools — Trips
+
+| Tool | Description |
+|------|-------------|
+| `tripit_create_trip` | Create a new trip with location, dates, and privacy settings |
+| `tripit_update_trip` | Update an existing trip's details |
+| `tripit_delete_trip` | Delete a trip and all its travel objects |
+
+#### Write Tools — Travel Objects
+
+| Tool | Description |
+|------|-------------|
+| `tripit_create_flight` | Create a flight with one or more segments |
+| `tripit_create_lodging` | Create a hotel/lodging reservation |
+| `tripit_create_car_rental` | Create a car rental reservation |
+| `tripit_create_activity` | Create an activity (tour, excursion, event) |
+| `tripit_create_restaurant` | Create a restaurant reservation |
+| `tripit_create_transport` | Create a ground transport reservation |
+| `tripit_create_rail` | Create a rail/train reservation with segments |
+| `tripit_create_note` | Create a note attached to a trip |
+| `tripit_delete_object` | Delete any travel object by type and ID |
+
+#### Tool Details
+
+##### `tripit_list_trips`
+
+List trips with optional filters.
 
 **Parameters:**
-- `start_date` (optional): Start date for filtering trips (YYYY-MM-DD)
-- `end_date` (optional): End date for filtering trips (YYYY-MM-DD)
-
-**Example request:**
-```json
-{
-  "function": "list_trips",
-  "arguments": {
-    "start_date": "2023-01-01",
-    "end_date": "2023-12-31"
-  }
-}
-```
+- `past` (bool, default: false) — Return past trips instead of current/future
+- `traveler` (string, optional) — Filter: 'true' (yours), 'false' (not yours), 'all'
+- `include_objects` (bool, default: false) — Include travel objects within each trip
+- `page_num` (int, optional) — Page number (1-based)
+- `page_size` (int, optional) — Items per page (1-25)
 
 **Example response:**
 ```json
@@ -198,59 +229,89 @@ Lists all trips, optionally filtered by date range.
     {
       "id": "123456789",
       "name": "Business Trip to New York",
-      "start_date": "2023-03-15",
-      "end_date": "2023-03-20",
+      "start_date": "2026-03-15",
+      "end_date": "2026-03-20",
       "primary_location": "New York, NY",
       "is_private": false
-    },
-    {
-      "id": "987654321",
-      "name": "Vacation in Paris",
-      "start_date": "2023-06-10",
-      "end_date": "2023-06-17",
-      "primary_location": "Paris, France",
-      "is_private": true
     }
-  ]
+  ],
+  "pagination": {"page_num": 1, "page_size": 5, "max_page": 1}
 }
 ```
 
-#### `get_trip`
+##### `tripit_get_trip`
 
-Gets detailed information about a specific trip.
+Get full details for a specific trip.
 
 **Parameters:**
-- `trip_id` (required): The TripIt trip ID
+- `trip_id` (string, required) — The TripIt trip ID
+- `include_objects` (bool, default: true) — Include travel objects
 
-**Example request:**
-```json
-{
-  "function": "get_trip",
-  "arguments": {
-    "trip_id": "123456789"
-  }
-}
-```
+##### `tripit_list_objects`
 
-**Example response:**
-```json
-{
-  "trip": {
-    "id": "123456789",
-    "display_name": "Business Trip to New York",
-    "start_date": "2023-03-15",
-    "end_date": "2023-03-20",
-    "primary_location": "New York, NY",
-    "is_private": "false",
-    "relative_url": "/trip/show/id/123456789",
-    "trip_lemmas": ["business", "trip", "new", "york"],
-    "AirObject": [...],
-    "LodgingObject": [...],
-    "ActivityObject": [...],
-    "TransportObject": [...]
-  }
-}
-```
+List travel objects within a trip.
+
+**Parameters:**
+- `trip_id` (string, required) — The trip ID
+- `object_type` (string, optional) — Filter by type: 'air', 'lodging', 'car', 'activity', 'restaurant', 'transport', 'rail', 'note'
+- `page_num` / `page_size` — Pagination
+
+##### `tripit_create_trip`
+
+Create a new trip.
+
+**Parameters:**
+- `primary_location` (string, required) — Destination (e.g., "New York, NY")
+- `start_date` (string, required) — Start date (YYYY-MM-DD)
+- `end_date` (string, required) — End date (YYYY-MM-DD)
+- `display_name` (string, optional) — Custom trip name
+- `is_private` (bool, default: false) — Privacy setting
+
+##### `tripit_create_flight`
+
+Create a flight with one or more segments.
+
+**Parameters:**
+- `trip_id` (string, required) — Trip to add flight to
+- `segments` (list, required) — Flight segments, each with:
+  - `start_date` (required), `start_time`, `end_date`, `end_time`
+  - `start_airport_code`, `end_airport_code`
+  - `marketing_airline`, `marketing_flight_number`
+  - `seats`, `service_class`, etc.
+- `supplier_name`, `supplier_conf_num` — Airline and confirmation number
+- `booking_site_name`, `booking_site_conf_num` — Booking details
+
+##### `tripit_create_lodging`
+
+Create a hotel reservation.
+
+**Parameters:**
+- `trip_id`, `start_date`, `end_date` (required)
+- `supplier_name` — Hotel name
+- `address`, `city`, `state`, `country` — Location
+- `room_type`, `number_guests`, `number_rooms`
+- `supplier_conf_num`, `booking_site_conf_num`
+
+##### `tripit_delete_object`
+
+Delete any travel object.
+
+**Parameters:**
+- `object_type` (string, required) — 'air', 'lodging', 'car', 'activity', 'restaurant', 'transport', 'rail', 'note'
+- `object_id` (string, required) — The object ID
+
+## Object Types
+
+| Type | API Name | Description |
+|------|----------|-------------|
+| `air` | AirObject | Flights |
+| `lodging` | LodgingObject | Hotels |
+| `car` | CarObject | Car rentals |
+| `activity` | ActivityObject | Tours, excursions |
+| `restaurant` | RestaurantObject | Restaurant reservations |
+| `transport` | TransportObject | Ground transport (taxi, shuttle) |
+| `rail` | RailObject | Train travel |
+| `note` | NoteObject | Trip notes |
 
 ## OAuth Troubleshooting
 
