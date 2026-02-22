@@ -46,7 +46,11 @@ class TripItAPIClient:
         self.consumer_secret = consumer_secret
         self.oauth_token = oauth_token
         self.oauth_token_secret = oauth_token_secret
-        self.client = httpx.Client(timeout=30.0)
+        self.client = httpx.AsyncClient(timeout=30.0)
+
+    async def close(self):
+        """Close the underlying HTTP client."""
+        await self.client.aclose()
 
     def _generate_nonce(self, length: int = 16) -> str:
         """Generate a random nonce for OAuth requests."""
@@ -135,8 +139,8 @@ class TripItAPIClient:
         )
         return auth_header
 
-    def _make_request(self, method: str, endpoint: str, params: Dict[str, str] = None,
-                      data: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def _make_request(self, method: str, endpoint: str, params: Dict[str, str] = None,
+                            data: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Make a request to the TripIt API.
 
@@ -177,7 +181,7 @@ class TripItAPIClient:
 
         try:
             if method.upper() == 'GET':
-                response = self.client.get(url, params=params, headers=headers)
+                response = await self.client.get(url, params=params, headers=headers)
             elif method.upper() == 'POST':
                 # POST: query params go in URL, form data in body
                 post_data = {}
@@ -185,7 +189,7 @@ class TripItAPIClient:
                     post_data.update(params)
                 post_data.update(form_params)
                 headers['Content-Type'] = 'application/x-www-form-urlencoded'
-                response = self.client.post(url, content=urlencode(post_data), headers=headers)
+                response = await self.client.post(url, content=urlencode(post_data), headers=headers)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
@@ -250,10 +254,10 @@ class TripItAPIClient:
 
     # ── List operations ──────────────────────────────────────────────
 
-    def list_trips(self, past: bool = False, include_objects: bool = True,
-                   traveler: Optional[str] = None,
-                   page_num: Optional[int] = None,
-                   page_size: Optional[int] = None) -> Dict[str, Any]:
+    async def list_trips(self, past: bool = False, include_objects: bool = True,
+                         traveler: Optional[str] = None,
+                         page_num: Optional[int] = None,
+                         page_size: Optional[int] = None) -> Dict[str, Any]:
         """
         List trips with optional filters and pagination.
 
@@ -283,7 +287,7 @@ class TripItAPIClient:
         if page_size is not None and page_size > 0:
             params['page_size'] = str(page_size)
 
-        response = self._make_request('GET', 'list/trip', params=params)
+        response = await self._make_request('GET', 'list/trip', params=params)
 
         result = {
             'trips': [],
@@ -306,7 +310,7 @@ class TripItAPIClient:
 
         return result
 
-    def get_trip(self, trip_id: str, include_objects: bool = True) -> Dict[str, Any]:
+    async def get_trip(self, trip_id: str, include_objects: bool = True) -> Dict[str, Any]:
         """
         Get details for a specific trip.
 
@@ -317,15 +321,13 @@ class TripItAPIClient:
         Returns:
             Trip details dict.
         """
-        params = {
-            'format': 'json',
-            'id': trip_id,
-        }
-
+        endpoint = f"get/trip/id/{trip_id}"
         if include_objects:
-            params['include_objects'] = 'true'
+            endpoint += "/include_objects/true"
 
-        response = self._make_request('GET', 'get/trip', params=params)
+        params = {'format': 'json'}
+
+        response = await self._make_request('GET', endpoint, params=params)
 
         if 'Trip' in response:
             return response['Trip']
@@ -334,9 +336,9 @@ class TripItAPIClient:
 
     # ── Object list/get operations ───────────────────────────────────
 
-    def list_objects(self, trip_id: str, object_type: Optional[str] = None,
-                     page_num: Optional[int] = None,
-                     page_size: Optional[int] = None) -> Dict[str, Any]:
+    async def list_objects(self, trip_id: str, object_type: Optional[str] = None,
+                           page_num: Optional[int] = None,
+                           page_size: Optional[int] = None) -> Dict[str, Any]:
         """
         List travel objects within a trip.
 
@@ -367,7 +369,7 @@ class TripItAPIClient:
         # Remove trip_id from params since it's in the endpoint path
         del params['trip_id']
 
-        response = self._make_request('GET', endpoint, params=params)
+        response = await self._make_request('GET', endpoint, params=params)
 
         result: Dict[str, Any] = {
             'pagination': {
@@ -397,7 +399,7 @@ class TripItAPIClient:
 
         return result
 
-    def get_object(self, object_type: str, object_id: str) -> Dict[str, Any]:
+    async def get_object(self, object_type: str, object_id: str) -> Dict[str, Any]:
         """
         Get a specific travel object by type and ID.
 
@@ -413,7 +415,7 @@ class TripItAPIClient:
         }
 
         endpoint = f"get/{object_type}/id/{object_id}"
-        response = self._make_request('GET', endpoint, params=params)
+        response = await self._make_request('GET', endpoint, params=params)
 
         # The response key is the capitalized object type (e.g., AirObject)
         # Try common patterns
@@ -440,7 +442,7 @@ class TripItAPIClient:
             response.pop(key, None)
         return response
 
-    def get_profile(self) -> Dict[str, Any]:
+    async def get_profile(self) -> Dict[str, Any]:
         """
         Get the authenticated user's profile.
 
@@ -448,7 +450,7 @@ class TripItAPIClient:
             Profile details dict.
         """
         params = {'format': 'json'}
-        response = self._make_request('GET', 'get/profile', params=params)
+        response = await self._make_request('GET', 'get/profile', params=params)
 
         if 'Profile' in response:
             return response['Profile']
@@ -457,7 +459,7 @@ class TripItAPIClient:
 
     # ── Create operations ────────────────────────────────────────────
 
-    def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Create a new object via the TripIt API.
 
@@ -471,7 +473,7 @@ class TripItAPIClient:
             The created object response.
         """
         params = {'format': 'json'}
-        response = self._make_request('POST', 'create', params=params, data=data)
+        response = await self._make_request('POST', 'create', params=params, data=data)
 
         warnings = self._extract_warnings(response)
         if warnings:
@@ -481,7 +483,7 @@ class TripItAPIClient:
 
     # ── Replace/update operations ────────────────────────────────────
 
-    def replace(self, object_type: str, object_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def replace(self, object_type: str, object_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Replace/update an existing object.
 
@@ -495,7 +497,7 @@ class TripItAPIClient:
         """
         params = {'format': 'json'}
         endpoint = f"replace/{object_type}/id/{object_id}"
-        response = self._make_request('POST', endpoint, params=params, data=data)
+        response = await self._make_request('POST', endpoint, params=params, data=data)
 
         warnings = self._extract_warnings(response)
         if warnings:
@@ -505,7 +507,7 @@ class TripItAPIClient:
 
     # ── Delete operations ────────────────────────────────────────────
 
-    def delete(self, object_type: str, object_id: str) -> Dict[str, Any]:
+    async def delete(self, object_type: str, object_id: str) -> Dict[str, Any]:
         """
         Delete an object by type and ID.
 
@@ -520,5 +522,5 @@ class TripItAPIClient:
         """
         params = {'format': 'json'}
         endpoint = f"delete/{object_type}/id/{object_id}"
-        response = self._make_request('GET', endpoint, params=params)
+        response = await self._make_request('GET', endpoint, params=params)
         return response
