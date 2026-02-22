@@ -7,9 +7,10 @@ car rentals, activities, restaurants, ground transport, trains, and notes.
 
 import json
 import os
-from typing import Any, Dict, Optional
+from contextlib import asynccontextmanager
+from typing import Any, Dict, List, Optional
 
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
 
 from .models import (
     CreateActivityInput,
@@ -23,60 +24,54 @@ from .models import (
     CreateTripInput,
     DeleteObjectInput,
     DeleteTripInput,
+    FlightSegmentInput,
     GetObjectInput,
     GetTripInput,
     ListObjectsInput,
     ListTripsInput,
+    RailSegmentInput,
     UpdateTripInput,
 )
 from .tripit_client import TripItAPIClient, TripItAPIError
 
 
+@asynccontextmanager
+async def app_lifespan():
+    """Manage the TripIt API client lifecycle."""
+    consumer_key = os.environ.get("TRIPIT_CONSUMER_KEY", "")
+    consumer_secret = os.environ.get("TRIPIT_CONSUMER_SECRET", "")
+    if not consumer_key or not consumer_secret:
+        raise ValueError(
+            "TripIt API credentials not found in environment variables. "
+            "Please set TRIPIT_CONSUMER_KEY and TRIPIT_CONSUMER_SECRET."
+        )
+    client = TripItAPIClient(
+        consumer_key,
+        consumer_secret,
+        os.environ.get("TRIPIT_OAUTH_TOKEN"),
+        os.environ.get("TRIPIT_OAUTH_TOKEN_SECRET"),
+    )
+    try:
+        yield {"tripit_client": client}
+    finally:
+        await client.close()
+
+
 # Initialize FastMCP application
 app = FastMCP(
-    name="TripIt MCP Server",
+    name="tripit_mcp",
     instructions=(
         "A Model Context Protocol (MCP) server that provides full CRUD access "
         "to TripIt trip data including flights, hotels, car rentals, activities, "
         "restaurants, ground transport, trains, and notes."
     ),
+    lifespan=app_lifespan,
 )
 
 
-class TripItService:
-    """Service class for TripIt API operations."""
-
-    def __init__(self):
-        """Initialize the TripIt service with credentials from environment."""
-        self.consumer_key = os.environ.get("TRIPIT_CONSUMER_KEY", None)
-        self.consumer_secret = os.environ.get("TRIPIT_CONSUMER_SECRET", None)
-        self.oauth_token = os.environ.get("TRIPIT_OAUTH_TOKEN", None)
-        self.oauth_token_secret = os.environ.get("TRIPIT_OAUTH_TOKEN_SECRET", None)
-
-        if not self.consumer_key or not self.consumer_secret:
-            raise ValueError(
-                "TripIt API credentials not found in environment variables. "
-                "Please set TRIPIT_CONSUMER_KEY and TRIPIT_CONSUMER_SECRET."
-            )
-
-        self.client = TripItAPIClient(
-            self.consumer_key,
-            self.consumer_secret,
-            self.oauth_token,
-            self.oauth_token_secret,
-        )
-
-
-# Lazy-initialized TripIt service (created on first tool call)
-_tripit_service: Optional[TripItService] = None
-
-
-def _get_service() -> TripItService:
-    """Get or create the TripIt service singleton."""
-    global _tripit_service
-    if _tripit_service is None:
-        _tripit_service = TripItService()
-    return _tripit_service
+def _get_client(ctx: Context) -> TripItAPIClient:
+    """Get the TripIt API client from lifespan context."""
+    return ctx.lifespan_context["tripit_client"]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -95,6 +90,7 @@ def _get_service() -> TripItService:
     },
 )
 async def tripit_list_trips(
+    ctx: Context,
     past: bool = False,
     traveler: Optional[str] = None,
     include_objects: bool = False,
@@ -114,7 +110,7 @@ async def tripit_list_trips(
             page_num=page_num,
             page_size=page_size,
         )
-        trips_data = _get_service().client.list_trips(
+        trips_data = await _get_client(ctx).list_trips(
             past=inp.past,
             include_objects=inp.include_objects,
             traveler=inp.traveler,
@@ -157,6 +153,7 @@ async def tripit_list_trips(
     },
 )
 async def tripit_get_trip(
+    ctx: Context,
     trip_id: str,
     include_objects: bool = True,
 ) -> Dict[str, Any]:
@@ -167,7 +164,7 @@ async def tripit_get_trip(
     """
     try:
         inp = GetTripInput(trip_id=trip_id, include_objects=include_objects)
-        trip = _get_service().client.get_trip(
+        trip = await _get_client(ctx).get_trip(
             trip_id=inp.trip_id,
             include_objects=inp.include_objects,
         )
@@ -187,6 +184,7 @@ async def tripit_get_trip(
     },
 )
 async def tripit_list_objects(
+    ctx: Context,
     trip_id: str,
     object_type: Optional[str] = None,
     page_num: Optional[int] = None,
@@ -204,7 +202,7 @@ async def tripit_list_objects(
             page_num=page_num,
             page_size=page_size,
         )
-        result = _get_service().client.list_objects(
+        result = await _get_client(ctx).list_objects(
             trip_id=inp.trip_id,
             object_type=inp.object_type,
             page_num=inp.page_num,
@@ -226,6 +224,7 @@ async def tripit_list_objects(
     },
 )
 async def tripit_get_object(
+    ctx: Context,
     object_type: str,
     object_id: str,
 ) -> Dict[str, Any]:
@@ -236,7 +235,7 @@ async def tripit_get_object(
     """
     try:
         inp = GetObjectInput(object_type=object_type, object_id=object_id)
-        obj = _get_service().client.get_object(
+        obj = await _get_client(ctx).get_object(
             object_type=inp.object_type,
             object_id=inp.object_id,
         )
@@ -255,13 +254,13 @@ async def tripit_get_object(
         "openWorldHint": False,
     },
 )
-async def tripit_get_profile() -> Dict[str, Any]:
+async def tripit_get_profile(ctx: Context) -> Dict[str, Any]:
     """Get the authenticated user's TripIt profile.
 
     Returns profile details including name, email, and account information.
     """
     try:
-        profile = _get_service().client.get_profile()
+        profile = await _get_client(ctx).get_profile()
         return {"profile": profile}
     except TripItAPIError as e:
         return {"error": str(e)}
@@ -283,6 +282,7 @@ async def tripit_get_profile() -> Dict[str, Any]:
     },
 )
 async def tripit_create_trip(
+    ctx: Context,
     primary_location: str,
     start_date: str,
     end_date: str,
@@ -311,7 +311,7 @@ async def tripit_create_trip(
         if inp.display_name:
             trip_data["display_name"] = inp.display_name
 
-        response = _get_service().client.create({"Trip": trip_data})
+        response = await _get_client(ctx).create({"Trip": trip_data})
 
         if "Trip" in response:
             return {"trip": response["Trip"]}
@@ -332,6 +332,7 @@ async def tripit_create_trip(
     },
 )
 async def tripit_update_trip(
+    ctx: Context,
     trip_id: str,
     primary_location: Optional[str] = None,
     start_date: Optional[str] = None,
@@ -353,7 +354,30 @@ async def tripit_update_trip(
             is_private=is_private,
         )
 
-        trip_data: Dict[str, Any] = {}
+        # Check that at least one field is being updated
+        has_update = any(
+            getattr(inp, f) is not None
+            for f in ("primary_location", "start_date", "end_date", "display_name", "is_private")
+        )
+        if not has_update:
+            return {"error": "No fields to update. Provide at least one field to change."}
+
+        # Fetch existing trip data first — TripIt replace is a full replacement,
+        # so we must send all fields to avoid reverting unspecified fields to defaults.
+        client = _get_client(ctx)
+        existing_trip = await client.get_trip(inp.trip_id, include_objects=False)
+
+        # Build the complete trip data from existing values
+        trip_data: Dict[str, Any] = {
+            "primary_location": existing_trip.get("primary_location", ""),
+            "start_date": existing_trip.get("start_date", ""),
+            "end_date": existing_trip.get("end_date", ""),
+            "is_private": existing_trip.get("is_private", "false"),
+        }
+        if existing_trip.get("display_name"):
+            trip_data["display_name"] = existing_trip["display_name"]
+
+        # Merge user-provided changes onto existing data
         if inp.primary_location is not None:
             trip_data["primary_location"] = inp.primary_location
         if inp.start_date is not None:
@@ -365,10 +389,7 @@ async def tripit_update_trip(
         if inp.is_private is not None:
             trip_data["is_private"] = "true" if inp.is_private else "false"
 
-        if not trip_data:
-            return {"error": "No fields to update. Provide at least one field to change."}
-
-        response = _get_service().client.replace("trip", inp.trip_id, {"Trip": trip_data})
+        response = await client.replace("trip", inp.trip_id, {"Trip": trip_data})
 
         if "Trip" in response:
             return {"trip": response["Trip"]}
@@ -388,14 +409,14 @@ async def tripit_update_trip(
         "openWorldHint": True,
     },
 )
-async def tripit_delete_trip(trip_id: str) -> Dict[str, Any]:
+async def tripit_delete_trip(ctx: Context, trip_id: str) -> Dict[str, Any]:
     """Delete a trip and all its travel objects.
 
     This is destructive and cannot be undone.
     """
     try:
         inp = DeleteTripInput(trip_id=trip_id)
-        response = _get_service().client.delete("trip", inp.trip_id)
+        response = await _get_client(ctx).delete("trip", inp.trip_id)
         return {"success": True, "message": f"Trip {inp.trip_id} deleted.", "response": response}
     except TripItAPIError as e:
         return {"error": str(e)}
@@ -439,8 +460,9 @@ def _build_segment_data(segment) -> Dict[str, Any]:
     },
 )
 async def tripit_create_flight(
+    ctx: Context,
     trip_id: str,
-    segments: list,
+    segments: List[FlightSegmentInput],
     booking_site_name: Optional[str] = None,
     booking_site_conf_num: Optional[str] = None,
     supplier_name: Optional[str] = None,
@@ -484,7 +506,7 @@ async def tripit_create_flight(
         if inp.notes:
             air_data["notes"] = inp.notes
 
-        response = _get_service().client.create({"AirObject": air_data})
+        response = await _get_client(ctx).create({"AirObject": air_data})
 
         if "AirObject" in response:
             return {"flight": response["AirObject"]}
@@ -510,6 +532,7 @@ async def tripit_create_flight(
     },
 )
 async def tripit_create_lodging(
+    ctx: Context,
     trip_id: str,
     start_date: str,
     end_date: str,
@@ -575,7 +598,7 @@ async def tripit_create_lodging(
             "supplier_conf_num", "supplier_phone", "notes",
         ])
 
-        response = _get_service().client.create({"LodgingObject": lodging_data})
+        response = await _get_client(ctx).create({"LodgingObject": lodging_data})
 
         if "LodgingObject" in response:
             return {"lodging": response["LodgingObject"]}
@@ -601,6 +624,7 @@ async def tripit_create_lodging(
     },
 )
 async def tripit_create_car_rental(
+    ctx: Context,
     trip_id: str,
     start_date: str,
     end_date: str,
@@ -662,7 +686,7 @@ async def tripit_create_car_rental(
             "supplier_conf_num", "supplier_phone", "notes",
         ])
 
-        response = _get_service().client.create({"CarObject": car_data})
+        response = await _get_client(ctx).create({"CarObject": car_data})
 
         if "CarObject" in response:
             return {"car_rental": response["CarObject"]}
@@ -688,6 +712,7 @@ async def tripit_create_car_rental(
     },
 )
 async def tripit_create_activity(
+    ctx: Context,
     trip_id: str,
     display_name: str,
     start_date: str,
@@ -753,7 +778,7 @@ async def tripit_create_activity(
             "supplier_phone", "supplier_url", "notes",
         ])
 
-        response = _get_service().client.create({"ActivityObject": activity_data})
+        response = await _get_client(ctx).create({"ActivityObject": activity_data})
 
         if "ActivityObject" in response:
             return {"activity": response["ActivityObject"]}
@@ -779,6 +804,7 @@ async def tripit_create_activity(
     },
 )
 async def tripit_create_restaurant(
+    ctx: Context,
     trip_id: str,
     display_name: str,
     date: str,
@@ -837,7 +863,7 @@ async def tripit_create_restaurant(
             "booking_site_conf_num", "notes",
         ])
 
-        response = _get_service().client.create({"RestaurantObject": rest_data})
+        response = await _get_client(ctx).create({"RestaurantObject": rest_data})
 
         if "RestaurantObject" in response:
             return {"restaurant": response["RestaurantObject"]}
@@ -863,6 +889,7 @@ async def tripit_create_restaurant(
     },
 )
 async def tripit_create_transport(
+    ctx: Context,
     trip_id: str,
     start_date: str,
     start_time: Optional[str] = None,
@@ -916,7 +943,7 @@ async def tripit_create_transport(
             "booking_site_name", "booking_site_conf_num", "notes",
         ])
 
-        response = _get_service().client.create({"TransportObject": transport_data})
+        response = await _get_client(ctx).create({"TransportObject": transport_data})
 
         if "TransportObject" in response:
             return {"transport": response["TransportObject"]}
@@ -963,8 +990,9 @@ def _build_rail_segment_data(segment) -> Dict[str, Any]:
     },
 )
 async def tripit_create_rail(
+    ctx: Context,
     trip_id: str,
-    segments: list,
+    segments: List[RailSegmentInput],
     booking_site_name: Optional[str] = None,
     booking_site_conf_num: Optional[str] = None,
     supplier_name: Optional[str] = None,
@@ -998,7 +1026,7 @@ async def tripit_create_rail(
             "supplier_name", "supplier_conf_num", "notes",
         ])
 
-        response = _get_service().client.create({"RailObject": rail_data})
+        response = await _get_client(ctx).create({"RailObject": rail_data})
 
         if "RailObject" in response:
             return {"rail": response["RailObject"]}
@@ -1024,6 +1052,7 @@ async def tripit_create_rail(
     },
 )
 async def tripit_create_note(
+    ctx: Context,
     trip_id: str,
     display_name: str,
     text: Optional[str] = None,
@@ -1051,7 +1080,7 @@ async def tripit_create_note(
 
         _set_optional(note_data, inp, ["text", "url", "notes"])
 
-        response = _get_service().client.create({"NoteObject": note_data})
+        response = await _get_client(ctx).create({"NoteObject": note_data})
 
         if "NoteObject" in response:
             return {"note": response["NoteObject"]}
@@ -1077,6 +1106,7 @@ async def tripit_create_note(
     },
 )
 async def tripit_delete_object(
+    ctx: Context,
     object_type: str,
     object_id: str,
 ) -> Dict[str, Any]:
@@ -1087,7 +1117,7 @@ async def tripit_delete_object(
     """
     try:
         inp = DeleteObjectInput(object_type=object_type, object_id=object_id)
-        response = _get_service().client.delete(inp.object_type, inp.object_id)
+        response = await _get_client(ctx).delete(inp.object_type, inp.object_id)
         return {
             "success": True,
             "message": f"{inp.object_type} object {inp.object_id} deleted.",

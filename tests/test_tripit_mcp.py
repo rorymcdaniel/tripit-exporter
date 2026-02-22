@@ -5,10 +5,11 @@ Tests for the TripIt MCP server functionality.
 import asyncio
 import json
 import os
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import httpx
 import pytest
+import pytest_asyncio
 
 from tripit_mcp.tripit_client import TripItAPIClient, TripItAPIError
 from tripit_mcp.models import (
@@ -302,8 +303,9 @@ class TestDeleteObjectInput:
 
 
 class TestTripItAPIClientListTrips:
-    def test_list_trips_basic(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_list_trips_basic(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "Trip": [
                     {
@@ -321,7 +323,7 @@ class TestTripItAPIClientListTrips:
             }
 
             client = TripItAPIClient("key", "secret")
-            result = client.list_trips(past=False)
+            result = await client.list_trips(past=False)
 
             assert len(result["trips"]) == 1
             assert result["trips"][0]["id"] == "12345"
@@ -337,9 +339,10 @@ class TestTripItAPIClientListTrips:
                 },
             )
 
-    def test_list_trips_single_trip_as_dict(self):
+    @pytest.mark.asyncio
+    async def test_list_trips_single_trip_as_dict(self):
         """TripIt returns a dict instead of list for single trips."""
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "Trip": {
                     "id": "12345",
@@ -351,13 +354,14 @@ class TestTripItAPIClientListTrips:
             }
 
             client = TripItAPIClient("key", "secret")
-            result = client.list_trips()
+            result = await client.list_trips()
 
             assert len(result["trips"]) == 1
             assert result["trips"][0]["display_name"] == "Solo Trip"
 
-    def test_list_trips_empty(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_list_trips_empty(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "page_num": "1",
                 "page_size": "5",
@@ -365,12 +369,13 @@ class TestTripItAPIClientListTrips:
             }
 
             client = TripItAPIClient("key", "secret")
-            result = client.list_trips()
+            result = await client.list_trips()
 
             assert result["trips"] == []
 
-    def test_list_trips_with_pagination(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_list_trips_with_pagination(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "Trip": [],
                 "page_num": "2",
@@ -379,26 +384,28 @@ class TestTripItAPIClientListTrips:
             }
 
             client = TripItAPIClient("key", "secret")
-            result = client.list_trips(page_num=2, page_size=10)
+            result = await client.list_trips(page_num=2, page_size=10)
 
             call_params = mock_request.call_args[1]["params"]
             assert call_params["page_num"] == "2"
             assert call_params["page_size"] == "10"
 
-    def test_list_trips_with_traveler_filter(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_list_trips_with_traveler_filter(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {"Trip": [], "page_num": "1", "page_size": "5", "max_page": "1"}
 
             client = TripItAPIClient("key", "secret")
-            client.list_trips(traveler="all")
+            await client.list_trips(traveler="all")
 
             call_params = mock_request.call_args[1]["params"]
             assert call_params["traveler"] == "all"
 
 
 class TestTripItAPIClientGetTrip:
-    def test_get_trip(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_get_trip(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "Trip": {
                     "id": "12345",
@@ -409,23 +416,49 @@ class TestTripItAPIClientGetTrip:
             }
 
             client = TripItAPIClient("key", "secret")
-            trip = client.get_trip(trip_id="12345")
+            trip = await client.get_trip(trip_id="12345")
 
             assert trip["id"] == "12345"
             assert trip["display_name"] == "Test Trip"
+            # Verify path-based parameters
+            mock_request.assert_called_once_with(
+                "GET",
+                "get/trip/id/12345/include_objects/true",
+                params={"format": "json"},
+            )
 
-    def test_get_trip_not_found(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_get_trip_without_objects(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {
+                "Trip": {"id": "12345", "display_name": "Test Trip"}
+            }
+
+            client = TripItAPIClient("key", "secret")
+            trip = await client.get_trip(trip_id="12345", include_objects=False)
+
+            assert trip["id"] == "12345"
+            # Verify no include_objects in path
+            mock_request.assert_called_once_with(
+                "GET",
+                "get/trip/id/12345",
+                params={"format": "json"},
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_trip_not_found(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {}
 
             client = TripItAPIClient("key", "secret")
             with pytest.raises(TripItAPIError, match="not found"):
-                client.get_trip(trip_id="99999")
+                await client.get_trip(trip_id="99999")
 
 
 class TestTripItAPIClientCreate:
-    def test_create_trip(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_create_trip(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "Trip": {
                     "id": "99999",
@@ -436,7 +469,7 @@ class TestTripItAPIClientCreate:
             }
 
             client = TripItAPIClient("key", "secret")
-            result = client.create({
+            result = await client.create({
                 "Trip": {
                     "start_date": "2026-06-01",
                     "end_date": "2026-06-07",
@@ -450,27 +483,29 @@ class TestTripItAPIClientCreate:
             assert call_args[0][0] == "POST"
             assert call_args[0][1] == "create"
 
-    def test_create_with_data_passed_as_json(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_create_with_data_passed_as_json(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {"AirObject": {"id": "111"}}
 
             client = TripItAPIClient("key", "secret")
             data = {"AirObject": {"trip_id": "12345", "Segment": {"start_date": "2026-06-01"}}}
-            client.create(data)
+            await client.create(data)
 
             call_kwargs = mock_request.call_args[1]
             assert call_kwargs["data"] == data
 
 
 class TestTripItAPIClientReplace:
-    def test_replace_trip(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_replace_trip(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "Trip": {"id": "12345", "display_name": "Updated Trip"}
             }
 
             client = TripItAPIClient("key", "secret")
-            result = client.replace("trip", "12345", {"Trip": {"display_name": "Updated Trip"}})
+            result = await client.replace("trip", "12345", {"Trip": {"display_name": "Updated Trip"}})
 
             assert result["Trip"]["display_name"] == "Updated Trip"
             call_args = mock_request.call_args
@@ -478,31 +513,34 @@ class TestTripItAPIClientReplace:
 
 
 class TestTripItAPIClientDelete:
-    def test_delete_trip(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_delete_trip(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {"timestamp": "123"}
 
             client = TripItAPIClient("key", "secret")
-            result = client.delete("trip", "12345")
+            result = await client.delete("trip", "12345")
 
             call_args = mock_request.call_args
             assert call_args[0][0] == "GET"
             assert call_args[0][1] == "delete/trip/id/12345"
 
-    def test_delete_object(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_delete_object(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {"timestamp": "123"}
 
             client = TripItAPIClient("key", "secret")
-            client.delete("air", "67890")
+            await client.delete("air", "67890")
 
             call_args = mock_request.call_args
             assert call_args[0][1] == "delete/air/id/67890"
 
 
 class TestTripItAPIClientListObjects:
-    def test_list_objects(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_list_objects(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "AirObject": [{"id": "111"}],
                 "LodgingObject": {"id": "222"},
@@ -512,7 +550,7 @@ class TestTripItAPIClientListObjects:
             }
 
             client = TripItAPIClient("key", "secret")
-            result = client.list_objects(trip_id="12345")
+            result = await client.list_objects(trip_id="12345")
 
             assert "AirObject" in result["objects"]
             assert len(result["objects"]["AirObject"]) == 1
@@ -522,8 +560,9 @@ class TestTripItAPIClientListObjects:
             call_args = mock_request.call_args
             assert call_args[0][1] == "list/object/trip_id/12345"
 
-    def test_list_objects_with_type_filter(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_list_objects_with_type_filter(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "AirObject": [{"id": "111"}],
                 "page_num": "1",
@@ -532,21 +571,22 @@ class TestTripItAPIClientListObjects:
             }
 
             client = TripItAPIClient("key", "secret")
-            client.list_objects(trip_id="12345", object_type="air")
+            await client.list_objects(trip_id="12345", object_type="air")
 
             call_args = mock_request.call_args
             assert call_args[0][1] == "list/object/trip_id/12345/type/air"
 
 
 class TestTripItAPIClientGetObject:
-    def test_get_air_object(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_get_air_object(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "AirObject": {"id": "111", "Segment": []}
             }
 
             client = TripItAPIClient("key", "secret")
-            result = client.get_object("air", "111")
+            result = await client.get_object("air", "111")
 
             assert result["id"] == "111"
             call_args = mock_request.call_args
@@ -554,8 +594,9 @@ class TestTripItAPIClientGetObject:
 
 
 class TestTripItAPIClientGetProfile:
-    def test_get_profile(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_get_profile(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "Profile": {
                     "screen_name": "testuser",
@@ -564,17 +605,18 @@ class TestTripItAPIClientGetProfile:
             }
 
             client = TripItAPIClient("key", "secret")
-            profile = client.get_profile()
+            profile = await client.get_profile()
 
             assert profile["screen_name"] == "testuser"
 
-    def test_get_profile_error(self):
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+    @pytest.mark.asyncio
+    async def test_get_profile_error(self):
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {}
 
             client = TripItAPIClient("key", "secret")
             with pytest.raises(TripItAPIError, match="Could not retrieve profile"):
-                client.get_profile()
+                await client.get_profile()
 
 
 class TestTripItAPIClientWarnings:
@@ -603,26 +645,27 @@ class TestTripItAPIClientWarnings:
 
 
 try:
-    from tripit_mcp.server import TripItService
+    from tripit_mcp.server import app_lifespan
     _server_import_ok = True
 except Exception:
     _server_import_ok = False
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable in this environment")
-class TestTripItService:
-    def test_init(self, mock_env_vars, mock_tripit_client):
-        service = TripItService()
+class TestAppLifespan:
+    @pytest.mark.asyncio
+    async def test_lifespan_creates_client(self, mock_env_vars):
+        async with app_lifespan() as ctx:
+            assert "tripit_client" in ctx
+            client = ctx["tripit_client"]
+            assert isinstance(client, TripItAPIClient)
 
-        assert service.consumer_key == "test_consumer_key"
-        assert service.consumer_secret == "test_consumer_secret"
-        assert service.oauth_token == "test_oauth_token"
-        assert service.oauth_token_secret == "test_oauth_token_secret"
-
-    def test_missing_credentials(self):
+    @pytest.mark.asyncio
+    async def test_lifespan_missing_credentials(self):
         with patch.dict(os.environ, {}, clear=True):
             with pytest.raises(ValueError, match="credentials not found"):
-                TripItService()
+                async with app_lifespan() as _:
+                    pass
 
 
 # ── Client Internal Method Tests ─────────────────────────────────────
@@ -631,59 +674,64 @@ class TestTripItService:
 class TestMakeRequestGET:
     """Test _make_request with real httpx mocking."""
 
-    def test_get_success(self):
+    @pytest.mark.asyncio
+    async def test_get_success(self):
         client = TripItAPIClient("key", "secret", "token", "token_secret")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"Trip": {"id": "123"}}
         mock_response.raise_for_status = MagicMock()
 
-        with patch.object(client.client, "get", return_value=mock_response) as mock_get:
-            result = client._make_request("GET", "get/trip", params={"format": "json", "id": "123"})
+        with patch.object(client.client, "get", new_callable=AsyncMock, return_value=mock_response) as mock_get:
+            result = await client._make_request("GET", "get/trip", params={"format": "json", "id": "123"})
             assert result == {"Trip": {"id": "123"}}
             mock_get.assert_called_once()
             # Verify URL was passed as first positional arg
             call_args = mock_get.call_args
             assert call_args[0][0] == "https://api.tripit.com/v1/get/trip"
 
-    def test_get_http_error(self):
+    @pytest.mark.asyncio
+    async def test_get_http_error(self):
         client = TripItAPIClient("key", "secret", "token", "token_secret")
         mock_response = MagicMock()
         mock_response.status_code = 404
         mock_response.text = "Not Found"
         mock_response.json.side_effect = ValueError("no json")
-        mock_request = MagicMock()
+        mock_http_request = MagicMock()
 
-        error = httpx.HTTPStatusError("Not Found", request=mock_request, response=mock_response)
+        error = httpx.HTTPStatusError("Not Found", request=mock_http_request, response=mock_response)
         mock_response.raise_for_status.side_effect = error
 
-        with patch.object(client.client, "get", return_value=mock_response):
+        with patch.object(client.client, "get", new_callable=AsyncMock, return_value=mock_response):
             with pytest.raises(TripItAPIError, match="Not Found"):
-                client._make_request("GET", "get/trip", params={"format": "json"})
+                await client._make_request("GET", "get/trip", params={"format": "json"})
 
-    def test_request_error(self):
+    @pytest.mark.asyncio
+    async def test_request_error(self):
         client = TripItAPIClient("key", "secret", "token", "token_secret")
 
-        with patch.object(client.client, "get", side_effect=httpx.RequestError("Connection refused")):
+        with patch.object(client.client, "get", new_callable=AsyncMock, side_effect=httpx.RequestError("Connection refused")):
             with pytest.raises(TripItAPIError, match="Request failed"):
-                client._make_request("GET", "list/trip", params={"format": "json"})
+                await client._make_request("GET", "list/trip", params={"format": "json"})
 
-    def test_unsupported_method(self):
+    @pytest.mark.asyncio
+    async def test_unsupported_method(self):
         client = TripItAPIClient("key", "secret")
         with pytest.raises(TripItAPIError, match="Unsupported HTTP method"):
-            client._make_request("DELETE", "some/endpoint")
+            await client._make_request("DELETE", "some/endpoint")
 
 
 class TestMakeRequestPOST:
-    def test_post_with_data(self):
+    @pytest.mark.asyncio
+    async def test_post_with_data(self):
         client = TripItAPIClient("key", "secret", "token", "token_secret")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"Trip": {"id": "999"}}
         mock_response.raise_for_status = MagicMock()
 
-        with patch.object(client.client, "post", return_value=mock_response) as mock_post:
-            result = client._make_request(
+        with patch.object(client.client, "post", new_callable=AsyncMock, return_value=mock_response) as mock_post:
+            result = await client._make_request(
                 "POST", "create",
                 params={"format": "json"},
                 data={"Trip": {"start_date": "2026-06-01"}},
@@ -694,15 +742,16 @@ class TestMakeRequestPOST:
             call_kwargs = mock_post.call_args[1]
             assert call_kwargs["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
 
-    def test_post_without_data(self):
+    @pytest.mark.asyncio
+    async def test_post_without_data(self):
         client = TripItAPIClient("key", "secret", "token", "token_secret")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"result": "ok"}
         mock_response.raise_for_status = MagicMock()
 
-        with patch.object(client.client, "post", return_value=mock_response):
-            result = client._make_request("POST", "some/endpoint", params={"format": "json"})
+        with patch.object(client.client, "post", new_callable=AsyncMock, return_value=mock_response):
+            result = await client._make_request("POST", "some/endpoint", params={"format": "json"})
             assert result["result"] == "ok"
 
 
@@ -841,16 +890,17 @@ class TestOAuthSignature:
 
 
 class TestGetObjectFallback:
-    def test_get_unknown_type_fallback(self):
+    @pytest.mark.asyncio
+    async def test_get_unknown_type_fallback(self):
         """When object type isn't in type_map, return full response."""
-        with patch.object(TripItAPIClient, "_make_request") as mock_request:
+        with patch.object(TripItAPIClient, "_make_request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "SomeNewObject": {"id": "999"},
                 "timestamp": "123",
                 "num_bytes": "456",
             }
             client = TripItAPIClient("key", "secret")
-            result = client.get_object("somenew", "999")
+            result = await client.get_object("somenew", "999")
             # timestamp and num_bytes should be stripped
             assert "timestamp" not in result
             assert "num_bytes" not in result
@@ -861,23 +911,23 @@ class TestGetObjectFallback:
 
 
 @pytest.fixture
-def mock_service():
-    """Mock _get_service() to return a service with a mocked client."""
-    mock_client = MagicMock()
-    mock_svc = MagicMock()
-    mock_svc.client = mock_client
-    with patch("tripit_mcp.server._get_service", return_value=mock_svc):
+def mock_ctx():
+    """Create a mock Context for tool calls."""
+    return MagicMock()
+
+
+@pytest.fixture
+def mock_service(mock_ctx):
+    """Mock _get_client() to return a mocked TripIt API client."""
+    mock_client = AsyncMock()
+    with patch("tripit_mcp.server._get_client", return_value=mock_client):
         yield mock_client
-
-
-def _run(coro):
-    """Run an async coroutine synchronously."""
-    return asyncio.get_event_loop().run_until_complete(coro)
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolListTrips:
-    def test_list_trips_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_list_trips_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_list_trips
         mock_service.list_trips.return_value = {
             "trips": [
@@ -886,193 +936,260 @@ class TestToolListTrips:
             ],
             "pagination": {"page_num": 1, "page_size": 5, "max_page": 1},
         }
-        result = _run(tripit_list_trips(past=False))
+        result = await tripit_list_trips(ctx=mock_ctx, past=False)
         assert len(result["trips"]) == 1
         assert result["trips"][0]["name"] == "NYC"
         assert result["trips"][0]["is_private"] is False
 
-    def test_list_trips_with_warnings(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_list_trips_with_warnings(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_list_trips
         mock_service.list_trips.return_value = {
             "trips": [],
             "pagination": {"page_num": 1, "page_size": 5, "max_page": 1},
             "warnings": ["Some warning"],
         }
-        result = _run(tripit_list_trips())
+        result = await tripit_list_trips(ctx=mock_ctx)
         assert result["warnings"] == ["Some warning"]
 
-    def test_list_trips_api_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_list_trips_api_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_list_trips
         mock_service.list_trips.side_effect = TripItAPIError("API down")
-        result = _run(tripit_list_trips())
+        result = await tripit_list_trips(ctx=mock_ctx)
         assert result["error"] == "API down"
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolGetTrip:
-    def test_get_trip_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_get_trip_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_get_trip
         mock_service.get_trip.return_value = {"id": "1", "display_name": "Trip"}
-        result = _run(tripit_get_trip(trip_id="1"))
+        result = await tripit_get_trip(ctx=mock_ctx, trip_id="1")
         assert result["trip"]["id"] == "1"
 
-    def test_get_trip_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_get_trip_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_get_trip
         mock_service.get_trip.side_effect = TripItAPIError("Not found")
-        result = _run(tripit_get_trip(trip_id="999"))
+        result = await tripit_get_trip(ctx=mock_ctx, trip_id="999")
         assert "error" in result
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolListObjects:
-    def test_list_objects_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_list_objects_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_list_objects
         mock_service.list_objects.return_value = {
             "objects": {"AirObject": [{"id": "1"}]},
             "pagination": {"page_num": 1, "page_size": 10, "max_page": 1},
         }
-        result = _run(tripit_list_objects(trip_id="1"))
+        result = await tripit_list_objects(ctx=mock_ctx, trip_id="1")
         assert "AirObject" in result["objects"]
 
-    def test_list_objects_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_list_objects_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_list_objects
         mock_service.list_objects.side_effect = TripItAPIError("Fail")
-        result = _run(tripit_list_objects(trip_id="1"))
+        result = await tripit_list_objects(ctx=mock_ctx, trip_id="1")
         assert "error" in result
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolGetObject:
-    def test_get_object_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_get_object_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_get_object
         mock_service.get_object.return_value = {"id": "111", "Segment": []}
-        result = _run(tripit_get_object(object_type="air", object_id="111"))
+        result = await tripit_get_object(ctx=mock_ctx, object_type="air", object_id="111")
         assert result["object"]["id"] == "111"
 
-    def test_get_object_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_get_object_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_get_object
         mock_service.get_object.side_effect = TripItAPIError("Not found")
-        result = _run(tripit_get_object(object_type="air", object_id="999"))
+        result = await tripit_get_object(ctx=mock_ctx, object_type="air", object_id="999")
         assert "error" in result
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolGetProfile:
-    def test_get_profile_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_get_profile_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_get_profile
         mock_service.get_profile.return_value = {"screen_name": "user1"}
-        result = _run(tripit_get_profile())
+        result = await tripit_get_profile(ctx=mock_ctx)
         assert result["profile"]["screen_name"] == "user1"
 
-    def test_get_profile_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_get_profile_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_get_profile
         mock_service.get_profile.side_effect = TripItAPIError("Auth error")
-        result = _run(tripit_get_profile())
+        result = await tripit_get_profile(ctx=mock_ctx)
         assert "error" in result
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolCreateTrip:
-    def test_create_trip_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_trip_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_trip
         mock_service.create.return_value = {
             "Trip": {"id": "999", "display_name": "New Trip"}
         }
-        result = _run(tripit_create_trip(
+        result = await tripit_create_trip(
+            ctx=mock_ctx,
             primary_location="New York",
             start_date="2026-06-01",
             end_date="2026-06-07",
-        ))
+        )
         assert result["trip"]["id"] == "999"
         # Verify create was called with correct Trip data
         call_data = mock_service.create.call_args[0][0]
         assert call_data["Trip"]["primary_location"] == "New York"
         assert call_data["Trip"]["is_private"] == "false"
 
-    def test_create_trip_with_display_name(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_trip_with_display_name(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_trip
         mock_service.create.return_value = {"Trip": {"id": "999"}}
-        result = _run(tripit_create_trip(
+        result = await tripit_create_trip(
+            ctx=mock_ctx,
             primary_location="Paris",
             start_date="2026-07-01",
             end_date="2026-07-10",
             display_name="Paris Vacation",
             is_private=True,
-        ))
+        )
         call_data = mock_service.create.call_args[0][0]
         assert call_data["Trip"]["display_name"] == "Paris Vacation"
         assert call_data["Trip"]["is_private"] == "true"
 
-    def test_create_trip_api_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_trip_api_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_trip
         mock_service.create.side_effect = TripItAPIError("Create failed")
-        result = _run(tripit_create_trip(
+        result = await tripit_create_trip(
+            ctx=mock_ctx,
             primary_location="Nowhere",
             start_date="2026-06-01",
             end_date="2026-06-07",
-        ))
+        )
         assert result["error"] == "Create failed"
 
-    def test_create_trip_validation_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_trip_validation_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_trip
-        result = _run(tripit_create_trip(
+        result = await tripit_create_trip(
+            ctx=mock_ctx,
             primary_location="NYC",
             start_date="bad-date",
             end_date="2026-06-07",
-        ))
+        )
         assert "error" in result
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolUpdateTrip:
-    def test_update_trip_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_update_trip_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_update_trip
+        mock_service.get_trip.return_value = {
+            "id": "1", "display_name": "Old Name", "start_date": "2026-06-01",
+            "end_date": "2026-06-07", "primary_location": "NYC", "is_private": "false",
+        }
         mock_service.replace.return_value = {
             "Trip": {"id": "1", "display_name": "Updated"}
         }
-        result = _run(tripit_update_trip(trip_id="1", display_name="Updated"))
+        result = await tripit_update_trip(ctx=mock_ctx, trip_id="1", display_name="Updated")
         assert result["trip"]["display_name"] == "Updated"
 
-    def test_update_trip_no_fields(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_update_trip_merges_with_existing(self, mock_service, mock_ctx):
+        """Verify that update fetches existing trip and merges changes to avoid data loss."""
         from tripit_mcp.server import tripit_update_trip
-        result = _run(tripit_update_trip(trip_id="1"))
+        mock_service.get_trip.return_value = {
+            "id": "1", "display_name": "My Trip", "start_date": "2026-06-01",
+            "end_date": "2026-06-07", "primary_location": "NYC", "is_private": "true",
+        }
+        mock_service.replace.return_value = {
+            "Trip": {"id": "1", "display_name": "Renamed"}
+        }
+        # Only change display_name — all other fields should be preserved
+        await tripit_update_trip(ctx=mock_ctx, trip_id="1", display_name="Renamed")
+        call_data = mock_service.replace.call_args[0][2]
+        trip = call_data["Trip"]
+        assert trip["display_name"] == "Renamed"
+        assert trip["primary_location"] == "NYC"
+        assert trip["start_date"] == "2026-06-01"
+        assert trip["end_date"] == "2026-06-07"
+        assert trip["is_private"] == "true"  # preserved from existing
+
+    @pytest.mark.asyncio
+    async def test_update_trip_is_private_override(self, mock_service, mock_ctx):
+        """Verify that boolean is_private can be explicitly set to False."""
+        from tripit_mcp.server import tripit_update_trip
+        mock_service.get_trip.return_value = {
+            "id": "1", "display_name": "Trip", "start_date": "2026-06-01",
+            "end_date": "2026-06-07", "primary_location": "NYC", "is_private": "true",
+        }
+        mock_service.replace.return_value = {"Trip": {"id": "1"}}
+        await tripit_update_trip(ctx=mock_ctx, trip_id="1", is_private=False)
+        call_data = mock_service.replace.call_args[0][2]
+        assert call_data["Trip"]["is_private"] == "false"
+
+    @pytest.mark.asyncio
+    async def test_update_trip_no_fields(self, mock_service, mock_ctx):
+        from tripit_mcp.server import tripit_update_trip
+        result = await tripit_update_trip(ctx=mock_ctx, trip_id="1")
         assert "error" in result
         assert "No fields" in result["error"]
 
-    def test_update_trip_api_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_update_trip_api_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_update_trip
+        mock_service.get_trip.return_value = {
+            "id": "1", "display_name": "Name", "start_date": "2026-06-01",
+            "end_date": "2026-06-07", "primary_location": "NYC", "is_private": "false",
+        }
         mock_service.replace.side_effect = TripItAPIError("Update failed")
-        result = _run(tripit_update_trip(trip_id="1", display_name="X"))
+        result = await tripit_update_trip(ctx=mock_ctx, trip_id="1", display_name="X")
         assert "error" in result
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolDeleteTrip:
-    def test_delete_trip_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_delete_trip_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_delete_trip
         mock_service.delete.return_value = {"timestamp": "123"}
-        result = _run(tripit_delete_trip(trip_id="1"))
+        result = await tripit_delete_trip(ctx=mock_ctx, trip_id="1")
         assert result["success"] is True
         assert "1" in result["message"]
 
-    def test_delete_trip_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_delete_trip_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_delete_trip
         mock_service.delete.side_effect = TripItAPIError("Delete failed")
-        result = _run(tripit_delete_trip(trip_id="1"))
+        result = await tripit_delete_trip(ctx=mock_ctx, trip_id="1")
         assert "error" in result
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolCreateFlight:
-    def test_create_flight_single_segment(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_flight_single_segment(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_flight
         mock_service.create.return_value = {"AirObject": {"id": "111"}}
-        result = _run(tripit_create_flight(
+        result = await tripit_create_flight(
+            ctx=mock_ctx,
             trip_id="1",
             segments=[{"start_date": "2026-06-01", "start_airport_code": "SFO", "end_airport_code": "JFK"}],
             supplier_name="United",
             supplier_conf_num="ABC123",
-        ))
+        )
         assert result["flight"]["id"] == "111"
         call_data = mock_service.create.call_args[0][0]
         assert call_data["AirObject"]["trip_id"] == "1"
@@ -1080,50 +1197,57 @@ class TestToolCreateFlight:
         # Single segment should NOT be wrapped in a list
         assert isinstance(call_data["AirObject"]["Segment"], dict)
 
-    def test_create_flight_multi_segment(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_flight_multi_segment(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_flight
         mock_service.create.return_value = {"AirObject": {"id": "111"}}
-        result = _run(tripit_create_flight(
+        result = await tripit_create_flight(
+            ctx=mock_ctx,
             trip_id="1",
             segments=[
                 {"start_date": "2026-06-01", "start_time": "08:00", "start_airport_code": "SFO", "end_airport_code": "ORD"},
                 {"start_date": "2026-06-01", "start_time": "14:00", "start_airport_code": "ORD", "end_airport_code": "JFK"},
             ],
-        ))
+        )
         call_data = mock_service.create.call_args[0][0]
         # Multi-segment should be a list
         assert isinstance(call_data["AirObject"]["Segment"], list)
         assert len(call_data["AirObject"]["Segment"]) == 2
 
-    def test_create_flight_segment_datetime_mapping(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_flight_segment_datetime_mapping(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_flight
         mock_service.create.return_value = {"AirObject": {"id": "111"}}
-        _run(tripit_create_flight(
+        await tripit_create_flight(
+            ctx=mock_ctx,
             trip_id="1",
             segments=[{
                 "start_date": "2026-06-01", "start_time": "08:00",
                 "end_date": "2026-06-01", "end_time": "11:30",
                 "start_airport_code": "SFO",
             }],
-        ))
+        )
         seg = mock_service.create.call_args[0][0]["AirObject"]["Segment"]
         assert seg["StartDateTime"] == {"date": "2026-06-01", "time": "08:00"}
         assert seg["EndDateTime"] == {"date": "2026-06-01", "time": "11:30"}
         assert seg["start_airport_code"] == "SFO"
 
-    def test_create_flight_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_flight_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_flight
         mock_service.create.side_effect = TripItAPIError("Create failed")
-        result = _run(tripit_create_flight(trip_id="1", segments=[{"start_date": "2026-06-01"}]))
+        result = await tripit_create_flight(ctx=mock_ctx, trip_id="1", segments=[{"start_date": "2026-06-01"}])
         assert "error" in result
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolCreateLodging:
-    def test_create_lodging_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_lodging_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_lodging
         mock_service.create.return_value = {"LodgingObject": {"id": "222"}}
-        result = _run(tripit_create_lodging(
+        result = await tripit_create_lodging(
+            ctx=mock_ctx,
             trip_id="1",
             start_date="2026-06-01",
             end_date="2026-06-05",
@@ -1134,20 +1258,22 @@ class TestToolCreateLodging:
             country="US",
             room_type="King Suite",
             number_guests=2,
-        ))
+        )
         assert result["lodging"]["id"] == "222"
         call_data = mock_service.create.call_args[0][0]
         assert call_data["LodgingObject"]["supplier_name"] == "Hilton"
         assert call_data["LodgingObject"]["Address"]["city"] == "New York"
         assert call_data["LodgingObject"]["number_guests"] == 2
 
-    def test_create_lodging_with_times(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_lodging_with_times(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_lodging
         mock_service.create.return_value = {"LodgingObject": {"id": "222"}}
-        _run(tripit_create_lodging(
+        await tripit_create_lodging(
+            ctx=mock_ctx,
             trip_id="1", start_date="2026-06-01", end_date="2026-06-05",
             start_time="15:00", end_time="11:00",
-        ))
+        )
         call_data = mock_service.create.call_args[0][0]
         assert call_data["LodgingObject"]["StartDateTime"]["time"] == "15:00"
         assert call_data["LodgingObject"]["EndDateTime"]["time"] == "11:00"
@@ -1155,10 +1281,12 @@ class TestToolCreateLodging:
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolCreateCarRental:
-    def test_create_car_rental_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_car_rental_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_car_rental
         mock_service.create.return_value = {"CarObject": {"id": "333"}}
-        result = _run(tripit_create_car_rental(
+        result = await tripit_create_car_rental(
+            ctx=mock_ctx,
             trip_id="1",
             start_date="2026-06-01",
             end_date="2026-06-05",
@@ -1166,7 +1294,7 @@ class TestToolCreateCarRental:
             car_type="SUV",
             start_location_name="JFK Airport",
             end_location_name="JFK Airport",
-        ))
+        )
         assert result["car_rental"]["id"] == "333"
         call_data = mock_service.create.call_args[0][0]
         assert call_data["CarObject"]["start_location_name"] == "JFK Airport"
@@ -1174,10 +1302,12 @@ class TestToolCreateCarRental:
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolCreateActivity:
-    def test_create_activity_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_activity_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_activity
         mock_service.create.return_value = {"ActivityObject": {"id": "444"}}
-        result = _run(tripit_create_activity(
+        result = await tripit_create_activity(
+            ctx=mock_ctx,
             trip_id="1",
             display_name="City Tour",
             start_date="2026-06-02",
@@ -1186,7 +1316,7 @@ class TestToolCreateActivity:
             end_time="12:00",
             address="Times Square",
             city="New York",
-        ))
+        )
         assert result["activity"]["id"] == "444"
         call_data = mock_service.create.call_args[0][0]
         assert call_data["ActivityObject"]["display_name"] == "City Tour"
@@ -1196,10 +1326,12 @@ class TestToolCreateActivity:
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolCreateRestaurant:
-    def test_create_restaurant_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_restaurant_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_restaurant
         mock_service.create.return_value = {"RestaurantObject": {"id": "555"}}
-        result = _run(tripit_create_restaurant(
+        result = await tripit_create_restaurant(
+            ctx=mock_ctx,
             trip_id="1",
             display_name="Le Bernardin",
             date="2026-06-03",
@@ -1208,7 +1340,7 @@ class TestToolCreateRestaurant:
             number_patrons=4,
             address="155 W 51st St",
             city="New York",
-        ))
+        )
         assert result["restaurant"]["id"] == "555"
         call_data = mock_service.create.call_args[0][0]
         assert call_data["RestaurantObject"]["DateTime"]["time"] == "19:30"
@@ -1218,10 +1350,12 @@ class TestToolCreateRestaurant:
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolCreateTransport:
-    def test_create_transport_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_transport_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_transport
         mock_service.create.return_value = {"TransportObject": {"id": "666"}}
-        result = _run(tripit_create_transport(
+        result = await tripit_create_transport(
+            ctx=mock_ctx,
             trip_id="1",
             start_date="2026-06-01",
             start_time="10:00",
@@ -1229,7 +1363,7 @@ class TestToolCreateTransport:
             end_time="11:00",
             start_location_name="Hotel",
             end_location_name="Airport",
-        ))
+        )
         assert result["transport"]["id"] == "666"
         call_data = mock_service.create.call_args[0][0]
         assert call_data["TransportObject"]["start_location_name"] == "Hotel"
@@ -1238,10 +1372,12 @@ class TestToolCreateTransport:
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolCreateRail:
-    def test_create_rail_single_segment(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_rail_single_segment(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_rail
         mock_service.create.return_value = {"RailObject": {"id": "777"}}
-        result = _run(tripit_create_rail(
+        result = await tripit_create_rail(
+            ctx=mock_ctx,
             trip_id="1",
             segments=[{
                 "start_date": "2026-06-02", "start_time": "07:00",
@@ -1249,7 +1385,7 @@ class TestToolCreateRail:
                 "carrier_name": "Amtrak", "train_number": "171",
             }],
             supplier_name="Amtrak",
-        ))
+        )
         assert result["rail"]["id"] == "777"
         call_data = mock_service.create.call_args[0][0]
         seg = call_data["RailObject"]["Segment"]
@@ -1257,60 +1393,67 @@ class TestToolCreateRail:
         assert seg["carrier_name"] == "Amtrak"
         assert seg["StartDateTime"]["date"] == "2026-06-02"
 
-    def test_create_rail_multi_segment(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_rail_multi_segment(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_rail
         mock_service.create.return_value = {"RailObject": {"id": "777"}}
-        _run(tripit_create_rail(
+        await tripit_create_rail(
+            ctx=mock_ctx,
             trip_id="1",
             segments=[
                 {"start_date": "2026-06-02"},
                 {"start_date": "2026-06-03"},
             ],
-        ))
+        )
         call_data = mock_service.create.call_args[0][0]
         assert isinstance(call_data["RailObject"]["Segment"], list)
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolCreateNote:
-    def test_create_note_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_note_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_note
         mock_service.create.return_value = {"NoteObject": {"id": "888"}}
-        result = _run(tripit_create_note(
+        result = await tripit_create_note(
+            ctx=mock_ctx,
             trip_id="1",
             display_name="Packing List",
             text="Sunscreen, hat",
             date="2026-06-01",
             url="https://example.com",
-        ))
+        )
         assert result["note"]["id"] == "888"
         call_data = mock_service.create.call_args[0][0]
         assert call_data["NoteObject"]["DateTime"]["date"] == "2026-06-01"
         assert call_data["NoteObject"]["text"] == "Sunscreen, hat"
         assert call_data["NoteObject"]["url"] == "https://example.com"
 
-    def test_create_note_minimal(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_create_note_minimal(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_create_note
         mock_service.create.return_value = {"NoteObject": {"id": "888"}}
-        result = _run(tripit_create_note(trip_id="1", display_name="Note"))
+        result = await tripit_create_note(ctx=mock_ctx, trip_id="1", display_name="Note")
         call_data = mock_service.create.call_args[0][0]
         assert "DateTime" not in call_data["NoteObject"]
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
 class TestToolDeleteObject:
-    def test_delete_object_success(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_delete_object_success(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_delete_object
         mock_service.delete.return_value = {"timestamp": "123"}
-        result = _run(tripit_delete_object(object_type="air", object_id="111"))
+        result = await tripit_delete_object(ctx=mock_ctx, object_type="air", object_id="111")
         assert result["success"] is True
         assert "air" in result["message"]
         mock_service.delete.assert_called_once_with("air", "111")
 
-    def test_delete_object_error(self, mock_service):
+    @pytest.mark.asyncio
+    async def test_delete_object_error(self, mock_service, mock_ctx):
         from tripit_mcp.server import tripit_delete_object
         mock_service.delete.side_effect = TripItAPIError("Not found")
-        result = _run(tripit_delete_object(object_type="air", object_id="999"))
+        result = await tripit_delete_object(ctx=mock_ctx, object_type="air", object_id="999")
         assert "error" in result
 
 
@@ -1342,14 +1485,11 @@ class TestSetOptionalHelper:
 
 
 @pytest.mark.skipif(not _server_import_ok, reason="FastMCP server import unavailable")
-class TestGetServiceLazy:
-    def test_lazy_init(self, mock_env_vars):
-        import tripit_mcp.server as srv
-        # Reset the singleton
-        srv._tripit_service = None
-        with patch.object(srv, "TripItAPIClient"):
-            svc = srv._get_service()
-            assert svc is not None
-            # Second call returns same instance
-            assert srv._get_service() is svc
-        srv._tripit_service = None  # cleanup
+class TestGetClientHelper:
+    def test_get_client_from_context(self):
+        from tripit_mcp.server import _get_client
+        mock_client = MagicMock()
+        mock_ctx = MagicMock()
+        mock_ctx.lifespan_context = {"tripit_client": mock_client}
+        result = _get_client(mock_ctx)
+        assert result is mock_client

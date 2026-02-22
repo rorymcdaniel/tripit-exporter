@@ -18,10 +18,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=6.0.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
     "black>=22.1.0",
     "ruff>=0.0.138",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["setuptools>=61.0.0", "wheel"]
